@@ -1,4 +1,4 @@
-name: attribution-guard
+name: commit-message-lint
 
 on:
   pull_request:
@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Run attribution guard
+      - name: Run commit message lint
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
@@ -24,8 +24,8 @@ jobs:
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          chmod +x .github/scripts/attribution-guard.sh
-          .github/scripts/attribution-guard.sh \
+          chmod +x .github/scripts/commit-message-lint.sh
+          .github/scripts/commit-message-lint.sh \
             --base-sha "${BASE_SHA}" \
             --head-sha "${HEAD_SHA}" \
             --title "${PR_TITLE}" \

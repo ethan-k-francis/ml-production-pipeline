@@ -1,0 +1,7 @@
+# Training pipeline dependencies
+# Pinned to minimum versions for reproducibility
+scikit-learn>=1.5.0
+pandas>=2.2.0
+numpy>=1.26.0
+mlflow>=2.17.0
+joblib>=1.4.0

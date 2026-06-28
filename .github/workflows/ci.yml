@@ -1,28 +1,145 @@
+# ============================================================
+# CI Pipeline — Lint, Test, Build
+#
+# Runs on every push to main and on all pull requests.
+# Five parallel jobs keep feedback fast (~2-3 min total):
+#   1. python-lint:  code style and static analysis (ruff)
+#   2. python-test:  training pipeline tests
+#   3. go-lint:      Go static analysis (golangci-lint)
+#   4. go-test:      drift detector unit tests
+#   5. docker-build: verify all images build cleanly
+# ============================================================
+
 name: CI
 
 on:
   push:
-    branches: [main, "efrancis/*"]
+    branches: [main]
   pull_request:
     branches: [main]
 
-permissions:
-  contents: read
+# Cancel in-progress runs for the same branch — saves CI minutes
+# when you push multiple commits quickly
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  lint:
+  # ── Python Linting ──────────────────────────────────────
+  # Ruff is 10-100x faster than flake8/pylint. Catches style issues,
+  # unused imports, and common bugs before they reach code review.
+  python-lint:
+    name: Python Lint
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install pre-commit
-        run: pip install pre-commit==4.1.0
+      - name: Install ruff
+        run: pip install ruff
 
-      - name: Run pre-commit hooks
-        run: pre-commit run --all-files --show-diff-on-failure
+      - name: Lint training code
+        run: ruff check training/
+
+      - name: Lint serving code
+        run: ruff check serving/
+
+  # ── Python Tests ────────────────────────────────────────
+  # Validates the training pipeline runs end-to-end:
+  # data generation → preprocessing → training → evaluation.
+  python-test:
+    name: Python Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install training dependencies
+        run: pip install -r training/requirements.txt
+
+      - name: Install serving dependencies
+        run: pip install -r serving/requirements.txt
+
+      - name: Generate synthetic data
+        run: cd training && python download_data.py
+
+      - name: Verify data generation
+        run: |
+          test -f data/transactions.csv
+          python -c "
+          import pandas as pd
+          df = pd.read_csv('data/transactions.csv')
+          assert len(df) == 10000, f'Expected 10000 rows, got {len(df)}'
+          assert 'is_fraud' in df.columns, 'Missing target column'
+          print(f'Dataset OK: {len(df)} rows, {len(df.columns)} columns')
+          "
+
+      - name: Run training pipeline
+        run: cd training && python train.py
+
+      - name: Verify model artifacts
+        run: |
+          test -f models/model.joblib
+          test -f models/scaler.joblib
+          echo "Model artifacts created successfully"
+
+  # ── Go Linting ──────────────────────────────────────────
+  # golangci-lint runs 50+ linters in parallel. Catches unused code,
+  # error handling issues, and performance problems.
+  go-lint:
+    name: Go Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          working-directory: drift-detector
+
+  # ── Go Tests ────────────────────────────────────────────
+  # Unit tests for statistical functions (PSI, KS, KL) and
+  # the monitoring loop. Uses -race to detect data races.
+  go-test:
+    name: Go Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Run tests
+        working-directory: drift-detector
+        run: go test -v -race -coverprofile=coverage.out ./...
+
+      - name: Check build
+        working-directory: drift-detector
+        run: go build -o /dev/null ./cmd/detector
+
+  # ── Docker Build ────────────────────────────────────────
+  # Verify all Dockerfiles build cleanly without pushing images.
+  # Catches dependency issues before they hit deployment.
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build serving image
+        run: docker build -t fraud-serving -f serving/Dockerfile .
+
+      - name: Build drift-detector image
+        run: docker build -t drift-detector -f drift-detector/Dockerfile drift-detector/

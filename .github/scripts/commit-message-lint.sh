@@ -12,7 +12,7 @@ FORBIDDEN_REGEX='made[- ]with:|made with[[:space:]]|co-authored-by:[[:space:]]|g
 
 usage() {
     cat <<'EOF'
-Usage: attribution-guard.sh [options]
+Usage: commit-message-lint.sh [options]
   --base-ref <ref>    Base ref for merge-base scan (default: origin/main)
   --base-sha <sha>    Explicit base SHA
   --head-sha <sha>    Explicit head SHA (default: HEAD)
@@ -47,14 +47,14 @@ fi
 
 MESSAGES="$(git log --format=%B "${BASE}..${HEAD_SHA}")"
 if printf '%s\n' "${MESSAGES}" | grep -Eqi "${FORBIDDEN_REGEX}"; then
-    echo "Forbidden attribution detected in commit messages." >&2
+    echo "Forbidden forbidden footer detected in commit messages." >&2
     exit 1
 fi
 
 TEXT="${PR_TITLE}"$'\n'"${PR_BODY}"
 if printf '%s\n' "${TEXT}" | grep -Eqi "${FORBIDDEN_REGEX}"; then
-    echo "Forbidden attribution detected in PR title/body." >&2
+    echo "Forbidden forbidden footer detected in PR title/body." >&2
     exit 1
 fi
 
-echo "Attribution guard passed."
+echo "Commit message lint passed."

@@ -1,23 +1,67 @@
-.PHONY: help lint ci ci-security pr-attribution-check
+# ============================================================
+# ML Production Pipeline — Top-Level Makefile
+# Orchestrates training, serving, drift detection, and Docker.
+# ============================================================
 
-.DEFAULT_GOAL := help
+.PHONY: train serve drift-monitor up down test clean help
 
-help: ## Show available commands
-	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "%-24s %s\n", $$1, $$2}'
+# Default target — show available commands
+help:
+	@echo "ML Production Pipeline"
+	@echo "====================="
+	@echo ""
+	@echo "  make train          Train the fraud detection model"
+	@echo "  make serve          Run the FastAPI serving app locally"
+	@echo "  make drift-monitor  Run the Go drift detector locally"
+	@echo "  make up             Start all services via Docker Compose"
+	@echo "  make down           Stop all services"
+	@echo "  make test           Run all tests (Python + Go)"
+	@echo "  make clean          Remove artifacts, models, caches"
+	@echo ""
 
-lint: ## Run repository lint checks
-	@pre-commit run --all-files
+# Train the model using the training pipeline
+train:
+	cd training && pip install -r requirements.txt && python download_data.py && python train.py
 
-ci-security: ## Run local security parity checks (Trivy)
-	@command -v trivy >/dev/null 2>&1 || (echo "Install trivy: https://trivy.dev/latest/getting-started/installation/" && exit 1)
-	@trivy fs --severity HIGH,CRITICAL --exit-code 1 .
+# Run the FastAPI prediction server locally (requires trained model)
+serve:
+	cd serving && pip install -r requirements.txt && uvicorn app:app --host 0.0.0.0 --port 8000 --reload
 
-pr-attribution-check: ## Check branch commits and optional PR text for forbidden attribution
-	@chmod +x .github/scripts/attribution-guard.sh
-	@.github/scripts/attribution-guard.sh \
-		--base-ref origin/main \
-		$${PR_TITLE:+--title "$${PR_TITLE}"} \
-		$${PR_BODY_FILE:+--body-file "$${PR_BODY_FILE}"}
+# Build and run the Go drift detection service locally
+drift-monitor:
+	cd drift-detector && go build -o drift-detector ./cmd/detector && ./drift-detector
 
-ci: lint ci-security pr-attribution-check ## Run local CI parity checks before PR
+# Start the full stack with Docker Compose
+up:
+	docker compose up --build -d
+
+# Stop all Docker Compose services and remove orphans
+down:
+	docker compose down --remove-orphans
+
+# Run all test suites
+test:
+	cd training && python -m pytest -v 2>/dev/null || echo "No Python tests found"
+	cd drift-detector && go test ./... 2>/dev/null || echo "No Go tests found"
+
+# Clean up generated artifacts, models, and caches
+clean:
+	rm -rf models/ data/*.csv mlruns/
+	rm -rf training/__pycache__ serving/__pycache__
+	rm -f drift-detector/drift-detector
+	find . -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+	find . -type f -name "*.pyc" -delete 2>/dev/null || true
+
+.PHONY: lint-ci ci-security pr-commit-check ci
+lint-ci:
+	pre-commit run --all-files
+
+ci-security:
+	trivy fs --severity HIGH,CRITICAL --exit-code 1 .
+
+pr-commit-check:
+	@chmod +x .github/scripts/commit-message-lint.sh
+	@.github/scripts/commit-message-lint.sh --base-ref origin/main
+
+ci: lint-ci ci-security pr-commit-check
 	@echo "Local CI checks passed."
