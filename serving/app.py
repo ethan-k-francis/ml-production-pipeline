@@ -22,7 +22,6 @@ import os
 import time
 from collections import deque
 from contextlib import asynccontextmanager
-from typing import Optional
 
 import joblib
 import numpy as np
@@ -57,8 +56,10 @@ metrics_store = {
 # These enforce input/output contracts. Invalid requests get a 422 with details
 # before any model inference happens — fail fast, fail clearly.
 
+
 class PredictionRequest(BaseModel):
     """Input features for a single transaction prediction."""
+
     amount: float = Field(..., description="Transaction amount in dollars")
     time: int = Field(..., description="Seconds elapsed from first transaction")
     v1: float = Field(..., description="PCA component 1")
@@ -72,17 +73,29 @@ class PredictionRequest(BaseModel):
     v9: float = Field(..., description="PCA component 9")
     v10: float = Field(..., description="PCA component 10")
 
-    model_config = {"json_schema_extra": {
-        "example": {
-            "amount": 150.0, "time": 3600,
-            "v1": -1.35, "v2": 1.19, "v3": 0.27, "v4": 0.16, "v5": 0.45,
-            "v6": 0.06, "v7": -0.68, "v8": 0.09, "v9": -0.25, "v10": -0.17,
+    model_config = {
+        "json_schema_extra": {
+            "example": {
+                "amount": 150.0,
+                "time": 3600,
+                "v1": -1.35,
+                "v2": 1.19,
+                "v3": 0.27,
+                "v4": 0.16,
+                "v5": 0.45,
+                "v6": 0.06,
+                "v7": -0.68,
+                "v8": 0.09,
+                "v9": -0.25,
+                "v10": -0.17,
+            }
         }
-    }}
+    }
 
 
 class PredictionResponse(BaseModel):
     """Prediction result with probability and feature echo."""
+
     prediction: int = Field(..., description="0 = legitimate, 1 = fraud")
     probability: float = Field(..., description="Probability of fraud (0.0 to 1.0)")
     label: str = Field(..., description="Human-readable label")
@@ -90,12 +103,14 @@ class PredictionResponse(BaseModel):
 
 class HealthResponse(BaseModel):
     """Service health status."""
+
     status: str
     model_loaded: bool
     redis_connected: bool
 
 
 # ── Startup / shutdown ───────────────────────────────────────
+
 
 def load_model() -> None:
     """
@@ -143,6 +158,7 @@ def connect_redis() -> None:
     global redis_client
     try:
         import redis
+
         redis_url = os.environ.get("REDIS_URL", "redis://localhost:6379")
         redis_client = redis.from_url(redis_url, decode_responses=True)
         redis_client.ping()
@@ -212,17 +228,38 @@ async def predict(request: PredictionRequest) -> PredictionResponse:
 
     # Convert request to feature array in the same order as training
     features = {
-        "v1": request.v1, "v2": request.v2, "v3": request.v3,
-        "v4": request.v4, "v5": request.v5, "v6": request.v6,
-        "v7": request.v7, "v8": request.v8, "v9": request.v9,
-        "v10": request.v10, "amount": request.amount, "time": request.time,
+        "v1": request.v1,
+        "v2": request.v2,
+        "v3": request.v3,
+        "v4": request.v4,
+        "v5": request.v5,
+        "v6": request.v6,
+        "v7": request.v7,
+        "v8": request.v8,
+        "v9": request.v9,
+        "v10": request.v10,
+        "amount": request.amount,
+        "time": request.time,
     }
 
-    feature_array = np.array([[
-        features["v1"], features["v2"], features["v3"], features["v4"],
-        features["v5"], features["v6"], features["v7"], features["v8"],
-        features["v9"], features["v10"], features["amount"], features["time"],
-    ]])
+    feature_array = np.array(
+        [
+            [
+                features["v1"],
+                features["v2"],
+                features["v3"],
+                features["v4"],
+                features["v5"],
+                features["v6"],
+                features["v7"],
+                features["v8"],
+                features["v9"],
+                features["v10"],
+                features["amount"],
+                features["time"],
+            ]
+        ]
+    )
 
     # Apply the same scaling transform used during training.
     # Without this, feature magnitudes would be different and predictions meaningless.
@@ -296,7 +333,7 @@ async def metrics() -> PlainTextResponse:
     lines = [
         "# HELP fraud_detector_requests_total Total prediction requests",
         "# TYPE fraud_detector_requests_total counter",
-        f'fraud_detector_requests_total {req_count}',
+        f"fraud_detector_requests_total {req_count}",
         "",
         "# HELP fraud_detector_predictions_total Predictions by class",
         "# TYPE fraud_detector_predictions_total counter",
@@ -309,7 +346,7 @@ async def metrics() -> PlainTextResponse:
         "",
         "# HELP fraud_detector_errors_total Total error count",
         "# TYPE fraud_detector_errors_total counter",
-        f'fraud_detector_errors_total {metrics_store["errors"]}',
+        f"fraud_detector_errors_total {metrics_store['errors']}",
         "",
         "# HELP fraud_detector_prediction_log_size In-memory prediction log size",
         "# TYPE fraud_detector_prediction_log_size gauge",

@@ -208,12 +208,16 @@ def main() -> None:
     for name, value in metrics.items():
         print(f"    {name:>10}: {value:.4f}")
 
-    print(f"\n  Classification Report:\n{classification_report(y_test, model.predict(X_test))}")
+    print(
+        f"\n  Classification Report:\n{classification_report(y_test, model.predict(X_test))}"
+    )
 
     # ── Save artifacts ───────────────────────────────────────
     model_path = os.path.join(model_dir, "model.joblib")
     scaler_path = os.path.join(model_dir, "scaler.joblib")
-    ref_dist_path = os.path.join(base_dir, "..", "drift-detector", "reference_distributions.json")
+    ref_dist_path = os.path.join(
+        base_dir, "..", "drift-detector", "reference_distributions.json"
+    )
 
     joblib.dump(model, model_path)
     joblib.dump(scaler, scaler_path)

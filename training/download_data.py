@@ -40,7 +40,7 @@ def generate_fraud_dataset(
 
     # Calculate class split — fraud is the minority class
     n_fraud = int(n_samples * fraud_ratio)
-    n_legit = n_samples - n_fraud
+    n_samples - n_fraud
 
     # make_classification generates a linearly separable dataset with some noise.
     # n_informative=8 means 8 features carry real signal, 2 are redundant noise.
@@ -95,7 +95,9 @@ def main() -> None:
     n_total = len(df)
     print(f"  Total transactions: {n_total:,}")
     print(f"  Fraudulent: {n_fraud:,} ({n_fraud / n_total * 100:.1f}%)")
-    print(f"  Legitimate: {n_total - n_fraud:,} ({(n_total - n_fraud) / n_total * 100:.1f}%)")
+    print(
+        f"  Legitimate: {n_total - n_fraud:,} ({(n_total - n_fraud) / n_total * 100:.1f}%)"
+    )
     print(f"  Features: {[c for c in df.columns if c != 'is_fraud']}")
 
     df.to_csv(output_path, index=False)
