@@ -1,0 +1,134 @@
+# ============================================================
+# Model Test Pipeline
+#
+# Triggers when training code changes — validates that the model
+# still meets minimum performance thresholds after code changes.
+#
+# This prevents regressions: if someone changes preprocessing,
+# hyperparameters, or feature engineering, the pipeline catches
+# any quality drop before it reaches main.
+#
+# Minimum thresholds are set conservatively — if the model can't
+# hit these on synthetic data, something is fundamentally broken.
+# ============================================================
+
+name: Model Test
+
+on:
+  push:
+    paths:
+      - "training/**"
+    branches: [main]
+  pull_request:
+    paths:
+      - "training/**"
+    branches: [main]
+
+jobs:
+  model-validation:
+    name: Validate Model Quality
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r training/requirements.txt
+
+      - name: Generate training data
+        run: cd training && python download_data.py
+
+      - name: Train model
+        run: cd training && python train.py
+
+      - name: Validate model metrics
+        run: |
+          python -c "
+          import joblib
+          import numpy as np
+          import pandas as pd
+          from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+          from sklearn.model_selection import train_test_split
+          from sklearn.preprocessing import StandardScaler
+
+          # Load the data and reproduce the same train/test split
+          df = pd.read_csv('data/transactions.csv')
+          feature_cols = [c for c in df.columns if c != 'is_fraud']
+          X = df[feature_cols].values
+          y = df['is_fraud'].values
+
+          X_train, X_test, y_train, y_test = train_test_split(
+              X, y, test_size=0.2, random_state=42, stratify=y
+          )
+
+          scaler = StandardScaler()
+          X_train = scaler.fit_transform(X_train)
+          X_test = scaler.transform(X_test)
+
+          # Load the trained model
+          model = joblib.load('models/model.joblib')
+
+          # Compute metrics
+          y_pred = model.predict(X_test)
+          y_prob = model.predict_proba(X_test)[:, 1]
+
+          accuracy = accuracy_score(y_test, y_pred)
+          precision = precision_score(y_test, y_pred, zero_division=0)
+          recall = recall_score(y_test, y_pred, zero_division=0)
+          f1 = f1_score(y_test, y_pred, zero_division=0)
+          auc = roc_auc_score(y_test, y_prob)
+
+          print(f'Accuracy:  {accuracy:.4f}')
+          print(f'Precision: {precision:.4f}')
+          print(f'Recall:    {recall:.4f}')
+          print(f'F1:        {f1:.4f}')
+          print(f'AUC-ROC:   {auc:.4f}')
+
+          # Minimum thresholds — if the model can't hit these on synthetic
+          # data, something is fundamentally broken in the pipeline
+          MIN_ACCURACY = 0.85
+          MIN_PRECISION = 0.30
+          MIN_RECALL = 0.20
+          MIN_F1 = 0.25
+          MIN_AUC = 0.75
+
+          failed = False
+          if accuracy < MIN_ACCURACY:
+              print(f'FAIL: accuracy {accuracy:.4f} < {MIN_ACCURACY}')
+              failed = True
+          if precision < MIN_PRECISION:
+              print(f'FAIL: precision {precision:.4f} < {MIN_PRECISION}')
+              failed = True
+          if recall < MIN_RECALL:
+              print(f'FAIL: recall {recall:.4f} < {MIN_RECALL}')
+              failed = True
+          if f1 < MIN_F1:
+              print(f'FAIL: f1 {f1:.4f} < {MIN_F1}')
+              failed = True
+          if auc < MIN_AUC:
+              print(f'FAIL: auc {auc:.4f} < {MIN_AUC}')
+              failed = True
+
+          if failed:
+              raise SystemExit('Model quality below minimum thresholds')
+          else:
+              print('All model quality checks passed')
+          "
+
+      - name: Verify reference distributions generated
+        run: |
+          test -f drift-detector/reference_distributions.json
+          python -c "
+          import json
+          with open('drift-detector/reference_distributions.json') as f:
+              dists = json.load(f)
+          assert len(dists) > 0, 'No distributions found'
+          for name, dist in dists.items():
+              assert 'mean' in dist, f'{name} missing mean'
+              assert 'histogram' in dist, f'{name} missing histogram'
+          print(f'Reference distributions OK: {len(dists)} features')
+          "

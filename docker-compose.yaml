@@ -1,0 +1,142 @@
+# ============================================================
+# Docker Compose — Full Stack (Phase 07)
+#
+# Complete ML pipeline with all services:
+#   - postgres:        MLflow metadata backend
+#   - mlflow:          experiment tracking and model registry
+#   - redis:           prediction logging stream (serving → drift detector)
+#   - serving:         FastAPI prediction API
+#   - drift-detector:  Go drift monitoring service
+#
+# Usage:
+#   docker compose up --build -d    # start everything
+#   docker compose logs -f          # watch all logs
+#   docker compose down             # tear down
+# ============================================================
+
+services:
+  # ── PostgreSQL ───────────────────────────────────────────
+  # Backend store for MLflow experiment metadata (runs, params, metrics).
+  # Alpine variant keeps the image small (~80MB vs ~400MB full).
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: mlflow
+      POSTGRES_PASSWORD: mlflow
+      POSTGRES_DB: mlflow
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mlflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ml-network
+
+  # ── MLflow Tracking Server ──────────────────────────────
+  # Central experiment tracking: compare runs, view metrics, browse artifacts.
+  # UI available at http://localhost:5000 after startup.
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.17.2
+    command: >
+      mlflow server
+      --backend-store-uri postgresql://mlflow:mlflow@postgres:5432/mlflow
+      --default-artifact-root /mlartifacts
+      --host 0.0.0.0
+      --port 5000
+    ports:
+      - "5000:5000"
+    volumes:
+      - mlflow_artifacts:/mlartifacts
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - ml-network
+
+  # ── Redis ───────────────────────────────────────────────
+  # Prediction logging stream: serving writes predictions here,
+  # drift detector reads them. Redis Streams provide an ordered,
+  # persistent, consumer-group-ready log — ideal for this pattern.
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    networks:
+      - ml-network
+
+  # ── Model Serving ───────────────────────────────────────
+  # FastAPI app serving fraud predictions.
+  # Depends on Redis for prediction logging (falls back to in-memory if down).
+  # Model files mounted from shared volume.
+  serving:
+    build:
+      context: .
+      dockerfile: serving/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - REDIS_URL=redis://redis:6379
+    volumes:
+      - ./models:/models
+    depends_on:
+      redis:
+        condition: service_healthy
+      mlflow:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/health')\""]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - ml-network
+
+  # ── Drift Detector ─────────────────────────────────────
+  # Go service that monitors prediction distributions for drift.
+  # Polls the serving API on interval, computes PSI/KS/KL stats,
+  # and fires webhook alerts when drift exceeds the threshold.
+  drift-detector:
+    build:
+      context: ./drift-detector
+      dockerfile: Dockerfile
+    environment:
+      - SERVING_URL=http://serving:8000
+      - CHECK_INTERVAL=300
+      - DRIFT_THRESHOLD=0.2
+      - WINDOW_SIZE=500
+      - WEBHOOK_URL=
+      - REFERENCE_DIST_PATH=/app/reference_distributions.json
+    depends_on:
+      serving:
+        condition: service_healthy
+    networks:
+      - ml-network
+
+# ── Volumes ───────────────────────────────────────────────
+# Named volumes persist data across container restarts.
+volumes:
+  postgres_data:
+    driver: local
+  mlflow_artifacts:
+    driver: local
+  redis_data:
+    driver: local
+
+# ── Network ───────────────────────────────────────────────
+# Single bridge network for inter-service communication.
+# Services resolve each other by name (e.g., "redis", "serving").
+networks:
+  ml-network:
+    driver: bridge
