@@ -1,40 +1,41 @@
 # ML Production Pipeline
 
-**End-to-end ML serving with automated drift detection**
+**Train a model, serve predictions, and get warned when real-world data drifts from what the model learned**
 
-A production-grade machine learning pipeline that trains a fraud detection model, serves predictions via FastAPI, and monitors for data drift using a custom Go service — with automated alerting when model performance may be degrading.
+This is an end-to-end **machine learning (ML) in production** demo. You train a fraud-detection model, expose it as a web Application Programming Interface (API), and run a separate monitor that watches incoming data and alerts you when patterns change enough that predictions may become unreliable.
+
+Built for learning: every service runs locally with Docker Compose.
 
 ---
 
-## Design Document
+## The problem in plain English
 
-### Problem
+A model trained on last year's data assumes the world looks a certain way. When reality shifts — new fraud patterns, seasonal spending changes, different customer behavior — the model keeps making predictions, but accuracy quietly drops. Nobody notices until money is lost or users complain.
 
-ML models silently degrade in production as real-world data distributions shift from training data — without monitoring, prediction quality drops undetected. A fraud detection model trained on historical patterns may miss emerging fraud techniques simply because the incoming data no longer resembles what the model learned. This project solves that by building automated drift detection directly into the serving pipeline.
+This project adds an automated **"is the data still familiar?"** check and sends alerts when it isn't.
 
-### Trade-offs
+---
 
-| Decision | Why |
+## What you'll learn
+
+| Concept | Plain English |
 |---|---|
-| **Go for drift detection** | The drift monitor needs fast statistical calculations over streaming data. Go's low-latency, compiled performance handles high-throughput PSI/KS computations without the GIL bottleneck — Python would struggle at high request volumes. |
-| **FastAPI for serving** | Industry standard for ML serving with native async support, automatic OpenAPI docs, and Pydantic validation. Integrates cleanly with scikit-learn and MLflow. |
-| **Redis for prediction logging** | Predictions flow from serving → Redis stream → drift detector. Decouples the services and provides a reliable buffer. Falls back to in-memory when Redis is unavailable. |
-| **PSI + KS for drift detection** | Population Stability Index catches gradual distribution shifts; Kolmogorov-Smirnov catches abrupt changes. Together they cover the full drift spectrum. |
-
-### Outcome
-
-- Drift detected and alerted within **5 minutes** of distribution shift
-- Automated retraining trigger via configurable webhook
-- Zero-downtime model serving with health checks and metrics
+| **Training** | Teach a model from example data |
+| **Serving** | Run the model behind an Application Programming Interface (API) so apps can ask for predictions |
+| **Experiment tracking** | Log what you tried (settings, scores, model files) so you can compare runs |
+| **Drift** | Incoming data looks different from training data |
+| **Population Stability Index (PSI)** | A score for gradual drift — how much the data distribution has shifted over time |
+| **Kolmogorov–Smirnov test (KS test)** | A score for sudden distribution shifts |
+| **Webhook alert** | Hypertext Transfer Protocol (HTTP) POST to Slack, Discord, or any URL when drift is detected |
 
 ---
 
-## Architecture
+## How it works
 
 ```
 ┌─────────────┐     ┌──────────┐     ┌─────────────────┐
 │  Training    │────▶│  MLflow  │────▶│ Model Registry  │
-│  (Python)    │     │  Server  │     │  (Artifacts)    │
+│  (Python)    │     │  Server  │     │  (saved models) │
 └─────────────┘     └──────────┘     └────────┬────────┘
                                               │
                                               ▼
@@ -42,96 +43,98 @@ ML models silently degrade in production as real-world data distributions shift 
 │   Client     │────▶│  FastAPI Serving (Python)        │
 │   Request    │◀────│  POST /predict  GET /health      │
 └─────────────┘     └──────────┬───────────────────────┘
-                               │ logs predictions
+                               │ logs each prediction
                                ▼
                     ┌──────────────────────┐
                     │   Redis Stream       │
+                    │   (message buffer)   │
                     └──────────┬───────────┘
                                │ reads predictions
                                ▼
                     ┌──────────────────────┐     ┌──────────────┐
                     │  Go Drift Monitor    │────▶│  Webhook     │
-                    │  (PSI + KS stats)    │     │  Alerts      │
+                    │  compares to baseline│     │  Alerts      │
                     └──────────────────────┘     └──────────────┘
 ```
 
+**Step by step:**
+
+1. **Train** a fraud classifier and save it via MLflow.
+2. **Serve** predictions through a FastAPI endpoint (`POST /predict`).
+3. **Log** each prediction to Redis so serving and monitoring stay independent.
+4. **Monitor** with a Go service that compares live feature values to a saved baseline using Population Stability Index (PSI) and Kolmogorov–Smirnov (KS) statistics.
+5. **Alert** via webhook when drift scores cross thresholds (typically within ~5 minutes).
+
 ---
 
-## Quick Start
+## Quick start
 
 ```bash
-# Start all services (MLflow, Postgres, Redis, Serving, Drift Monitor)
+# Start all services (MLflow, Postgres, Redis, Application Programming Interface (API), drift monitor)
 make up
 
 # Train the fraud detection model
 make train
 
-# Run predictions against the serving endpoint
+# Ask for a prediction
 curl -X POST http://localhost:8000/predict \
   -H "Content-Type: application/json" \
   -d '{"amount": 150.0, "time": 3600, "v1": -1.35, "v2": 1.19, "v3": 0.27, "v4": 0.16, "v5": 0.45, "v6": 0.06, "v7": -0.68, "v8": 0.09, "v9": -0.25, "v10": -0.17}'
 
-# Tear everything down
+# Stop everything
 make down
 ```
 
 ---
 
-## Tech Stack
+## What's inside
 
-| Component | Technology | Purpose |
+| Piece | Technology | What it does |
 |---|---|---|
-| Model Training | Python, scikit-learn | RandomForest fraud classifier |
-| Experiment Tracking | MLflow | Parameter/metric/artifact logging |
-| Model Serving | FastAPI, Uvicorn | REST API for predictions |
-| Drift Detection | Go (stdlib only) | PSI, KS, KL divergence statistics |
-| Prediction Buffer | Redis Streams | Decouple serving from monitoring |
-| Orchestration | Docker Compose | Multi-service local deployment |
-| Metadata Store | PostgreSQL | MLflow backend storage |
-| CI/CD | GitHub Actions | Lint, test, build on every push |
+| Training | Python, scikit-learn | Builds a RandomForest fraud classifier |
+| Experiment tracking | MLflow | Records runs, metrics, and model artifacts |
+| Application Programming Interface (API) | FastAPI | Serves predictions over Hypertext Transfer Protocol (HTTP) |
+| Drift monitor | Go (stdlib only) | Computes Population Stability Index (PSI) and Kolmogorov–Smirnov (KS) statistics on live data |
+| Buffer | Redis Streams | Holds predictions between the API and monitor |
+| Orchestration | Docker Compose | Runs the full stack locally |
+| Database | PostgreSQL | Stores MLflow metadata |
 
 ---
 
-## Structure
+## Project layout
 
 ```
 ml-production-pipeline/
-├── training/               # Model training pipeline
-│   ├── train.py            # Training script with MLflow tracking
-│   ├── download_data.py    # Synthetic data generation
-│   └── requirements.txt
-├── serving/                # FastAPI prediction service
-│   ├── app.py              # REST API with /predict, /health, /metrics
-│   ├── Dockerfile
-│   └── requirements.txt
-├── drift-detector/         # Go drift monitoring service
-│   ├── cmd/detector/       # Entry point
-│   ├── internal/
-│   │   ├── config/         # Environment-based configuration
-│   │   ├── detector/       # PSI, KS, monitoring loop
-│   │   └── alerting/       # Webhook notifications
-│   ├── reference_distributions.json
-│   ├── Dockerfile
-│   └── go.mod
-├── docker-compose.yaml     # Full stack orchestration
-├── .github/workflows/      # CI pipelines
-├── Makefile                # Developer commands
-└── README.md
+├── training/               # Train script + data download
+├── serving/                # FastAPI app (/predict, /health, /metrics)
+├── drift-detector/         # Go drift monitor + alerting
+├── docker-compose.yaml
+├── Makefile
+└── .github/workflows/      # Continuous Integration (CI): lint, test, build
 ```
 
 ---
 
-## Future Enhancements
+## Design choices (for the curious)
 
-- **Model A/B testing** — serve multiple model versions and compare live performance
-- **Prometheus + Grafana** — dashboards for prediction latency, drift scores, model accuracy
-- **Automated retraining pipeline** — trigger retrain on drift detection via webhook → CI
-- **Feature store integration** — centralized feature management with Feast
-- **Kubernetes deployment** — Helm charts for production-scale serving
-- **Shadow mode** — run new models alongside production without affecting users
+| Decision | Why |
+|---|---|
+| Go for drift detection | Fast number-crunching on a stream of predictions |
+| FastAPI for serving | Simple async Application Programming Interface (API) with automatic docs at `/docs` |
+| Redis between services | API stays fast even if the monitor is briefly slow |
+| Population Stability Index (PSI) + Kolmogorov–Smirnov (KS) together | PSI catches slow drift; KS catches sudden shifts |
+
+---
+
+## Ideas for extending this
+
+- A/B test two model versions side by side
+- Grafana dashboards for latency and drift scores
+- Auto-retrain when drift alert fires
+- Deploy on Kubernetes (K8s) for production scale
 
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details.
+MIT — see [LICENSE](LICENSE).
