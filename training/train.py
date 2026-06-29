@@ -215,9 +215,8 @@ def main() -> None:
     # ── Save artifacts ───────────────────────────────────────
     model_path = os.path.join(model_dir, "model.joblib")
     scaler_path = os.path.join(model_dir, "scaler.joblib")
-    ref_dist_path = os.path.join(
-        base_dir, "..", "drift-detector", "reference_distributions.json"
-    )
+    # Shared volume path so drift-detector can read the same file after retrain
+    ref_dist_path = os.path.join(model_dir, "reference_distributions.json")
 
     joblib.dump(model, model_path)
     joblib.dump(scaler, scaler_path)

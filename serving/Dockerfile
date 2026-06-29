@@ -30,6 +30,9 @@ COPY training/ /app/training/
 # Model directory — mounted as volume or populated by training
 RUN mkdir -p /models /app/data && chown -R appuser:appuser /models /app/data
 
+# Training writes to ../models; serving loads from /models — same target via symlink
+RUN ln -sf /models /app/models
+
 # Run as non-root for security — least-privilege principle
 USER appuser
 
