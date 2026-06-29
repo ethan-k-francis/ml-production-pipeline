@@ -42,11 +42,12 @@ services:
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.17.2
     command: >
+      sh -c "pip install --quiet psycopg2-binary &&
       mlflow server
       --backend-store-uri postgresql://mlflow:mlflow@postgres:5432/mlflow
       --default-artifact-root /mlartifacts
       --host 0.0.0.0
-      --port 5000
+      --port 5000"
     ports:
       - "5000:5000"
     volumes:
@@ -117,7 +118,9 @@ services:
       - DRIFT_THRESHOLD=0.2
       - WINDOW_SIZE=500
       - WEBHOOK_URL=
-      - REFERENCE_DIST_PATH=/app/reference_distributions.json
+      - REFERENCE_DIST_PATH=/models/reference_distributions.json
+    volumes:
+      - ./models:/models:ro
     depends_on:
       serving:
         condition: service_healthy

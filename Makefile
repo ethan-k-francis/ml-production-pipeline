@@ -33,6 +33,8 @@ drift-monitor:
 
 # Start the full stack with Docker Compose
 up:
+	@mkdir -p models
+	@test -f models/reference_distributions.json || cp drift-detector/reference_distributions.json models/
 	docker compose up --build -d
 
 # Stop all Docker Compose services and remove orphans
